@@ -41,6 +41,8 @@ button { color: inherit; }
 .text-button:hover::after { transform: scaleX(.35); }
 
 .gallery-wrap { display: grid; align-items: center; min-width: 0; overflow: hidden; padding-bottom: 42px; }
+.gallery-wrap.is-scrollable { cursor: grab; }
+.gallery-wrap.is-dragging, .gallery-wrap.is-dragging * { cursor: grabbing !important; user-select: none; }
 .gallery {
   display: flex; align-items: center; gap: clamp(14px, 2vw, 32px); width: 100%; overflow-x: auto; overflow-y: hidden;
   padding: 7vh max(8vw, calc(50vw - 190px)); scroll-behavior: smooth; scrollbar-width: none; overscroll-behavior-x: contain;

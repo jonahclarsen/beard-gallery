@@ -143,7 +143,7 @@ function renderGallery(): void {
         ${voteStatus.isAdmin ? `<a class="text-button" href="/admin">admin</a>` : ""}
       </nav>
     </header>
-    <section class="gallery-wrap" aria-label="Beard days">
+    <section class="gallery-wrap ${items ? "is-scrollable" : ""}" aria-label="Beard days">
       ${items ? `<div class="gallery" id="gallery">${items}</div>` : `<div class="empty-mark"><img src="${placeholder}" alt="" /><span>soon.</span></div>`}
     </section>
     <div id="overlay-root"></div>
@@ -158,9 +158,15 @@ function renderGallery(): void {
 
 function setupGalleryMotion(): void {
   const track = document.querySelector<HTMLDivElement>("#gallery");
-  if (!track) return;
+  const surface = document.querySelector<HTMLElement>(".gallery-wrap");
+  if (!track || !surface) return;
   let pointerX = window.innerWidth / 2;
   let active = false;
+  let dragging = false;
+  let dragged = false;
+  let suppressClick = false;
+  let dragStartX = 0;
+  let dragStartScroll = 0;
   let frame = 0;
 
   const scaleCards = () => {
@@ -176,16 +182,53 @@ function setupGalleryMotion(): void {
 
   const drift = () => {
     if (!active) return;
-    const edge = Math.max(0, Math.abs(pointerX / window.innerWidth * 2 - 1) - 0.42) / 0.58;
-    const direction = pointerX < window.innerWidth / 2 ? -1 : 1;
-    track.scrollLeft += direction * edge * edge * 5;
+    if (!dragging) {
+      const edge = Math.max(0, Math.abs(pointerX / window.innerWidth * 2 - 1) - 0.42) / 0.58;
+      const direction = pointerX < window.innerWidth / 2 ? -1 : 1;
+      track.scrollLeft += direction * edge * edge * 5;
+    }
     scaleCards();
     frame = requestAnimationFrame(drift);
   };
 
-  track.addEventListener("pointerenter", () => { active = true; cancelAnimationFrame(frame); drift(); });
-  track.addEventListener("pointerleave", () => { active = false; cancelAnimationFrame(frame); });
-  track.addEventListener("pointermove", (event) => { pointerX = event.clientX; scaleCards(); });
+  surface.addEventListener("pointerenter", () => { active = true; cancelAnimationFrame(frame); drift(); });
+  surface.addEventListener("pointerleave", () => { if (!dragging) { active = false; cancelAnimationFrame(frame); } });
+  surface.addEventListener("pointerdown", (event) => {
+    if (event.pointerType !== "mouse" || event.button !== 0) return;
+    dragging = true;
+    dragged = false;
+    dragStartX = event.clientX;
+    dragStartScroll = track.scrollLeft;
+    surface.classList.add("is-dragging");
+    surface.setPointerCapture(event.pointerId);
+  });
+  surface.addEventListener("pointermove", (event) => {
+    pointerX = event.clientX;
+    if (dragging) {
+      const distance = event.clientX - dragStartX;
+      if (Math.abs(distance) > 4) dragged = true;
+      track.scrollLeft = dragStartScroll - distance;
+    }
+    scaleCards();
+  });
+  const finishDrag = (event: PointerEvent) => {
+    if (!dragging) return;
+    dragging = false;
+    surface.classList.remove("is-dragging");
+    if (surface.hasPointerCapture(event.pointerId)) surface.releasePointerCapture(event.pointerId);
+    if (dragged) {
+      suppressClick = true;
+      window.setTimeout(() => { suppressClick = false; }, 0);
+    }
+    if (!surface.matches(":hover")) { active = false; cancelAnimationFrame(frame); }
+  };
+  surface.addEventListener("pointerup", finishDrag);
+  surface.addEventListener("pointercancel", finishDrag);
+  surface.addEventListener("click", (event) => {
+    if (!suppressClick) return;
+    event.preventDefault();
+    event.stopPropagation();
+  }, { capture: true });
   track.addEventListener("scroll", scaleCards, { passive: true });
   track.addEventListener("wheel", (event) => {
     if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
