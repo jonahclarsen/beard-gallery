@@ -2,6 +2,8 @@
 
 A minimal, horizontally-scrolling beard-day photo gallery running on Cloudflare Workers.
 
+Live site: [beard.jonah.art](https://beard.jonah.art)
+
 ## Storage
 
 - D1: photo metadata and permanent votes
