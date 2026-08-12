@@ -1,7 +1,15 @@
 import { parse as parseExif } from "exifr";
-import "@fontsource/dm-mono/300.css";
-import "@fontsource/dm-mono/400.css";
-import "@fontsource/instrument-serif/400.css";
+import "@fontsource/dm-mono/latin-300.css";
+import "@fontsource/dm-mono/latin-400.css";
+import "@fontsource/instrument-serif/latin-400.css";
+import "@fontsource/cormorant-garamond/latin-400.css";
+import "@fontsource/playfair-display/latin-400.css";
+import "@fontsource/bodoni-moda/latin-400.css";
+import "@fontsource/fraunces/latin-400.css";
+import "@fontsource/space-grotesk/latin-400.css";
+import "@fontsource/syne/latin-400.css";
+import "@fontsource/libre-baskerville/latin-400.css";
+import "@fontsource/manrope/latin-400.css";
 
 interface Photo {
   id: string;
@@ -15,6 +23,9 @@ interface Photo {
 interface GalleryData {
   photos: Photo[];
   maxDay: number;
+  backgroundColor: string;
+  logoFont: string;
+  bodyFont: string;
 }
 
 interface VoteResult {
@@ -24,7 +35,22 @@ interface VoteResult {
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const placeholder = "/placeholder.svg";
-let gallery: GalleryData = { photos: [], maxDay: 0 };
+const defaultBackgroundColor = "#f2df64";
+const fontOptions = [
+  { id: "instrument-serif", label: "Instrument Serif", family: '"Instrument Serif", serif' },
+  { id: "dm-mono", label: "DM Mono", family: '"DM Mono", monospace' },
+  { id: "cormorant-garamond", label: "Cormorant", family: '"Cormorant Garamond", serif' },
+  { id: "playfair-display", label: "Playfair", family: '"Playfair Display", serif' },
+  { id: "bodoni-moda", label: "Bodoni", family: '"Bodoni Moda", serif' },
+  { id: "fraunces", label: "Fraunces", family: '"Fraunces", serif' },
+  { id: "space-grotesk", label: "Space Grotesk", family: '"Space Grotesk", sans-serif' },
+  { id: "syne", label: "Syne", family: '"Syne", sans-serif' },
+  { id: "libre-baskerville", label: "Baskerville", family: '"Libre Baskerville", serif' },
+  { id: "manrope", label: "Manrope", family: '"Manrope", sans-serif' },
+] as const;
+let gallery: GalleryData = {
+  photos: [], maxDay: 0, backgroundColor: defaultBackgroundColor, logoFont: "instrument-serif", bodyFont: "dm-mono",
+};
 let voteStatus = { hasVoted: false, beardDay: null as number | null, isAdmin: false };
 let voteSocket: WebSocket | null = null;
 let activePhotoIndex: number | null = null;
@@ -53,6 +79,25 @@ function toLocalInput(value: string | null): string {
   const date = new Date(value);
   const offset = date.getTimezoneOffset() * 60_000;
   return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function applyBackgroundColor(color: string): void {
+  const safeColor = /^#[0-9a-f]{6}$/i.test(color) ? color.toLowerCase() : defaultBackgroundColor;
+  document.documentElement.style.setProperty("--paper", safeColor);
+  document.documentElement.style.backgroundColor = safeColor;
+  document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute("content", safeColor);
+}
+
+function applyFontSettings(logoFont: string, bodyFont: string): void {
+  const logo = fontOptions.find((option) => option.id === logoFont) ?? fontOptions[0];
+  const body = fontOptions.find((option) => option.id === bodyFont) ?? fontOptions[1];
+  document.documentElement.style.setProperty("--logo-font", logo.family);
+  document.documentElement.style.setProperty("--body-font", body.family);
+}
+
+function applySiteAppearance(data: Pick<GalleryData, "backgroundColor" | "logoFont" | "bodyFont">): void {
+  applyBackgroundColor(data.backgroundColor);
+  applyFontSettings(data.logoFont, data.bodyFont);
 }
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
@@ -322,6 +367,7 @@ async function initGallery(): Promise<void> {
     api<GalleryData>("/api/gallery"),
     api<typeof voteStatus>("/api/vote/status"),
   ]);
+  applySiteAppearance(gallery);
   renderGallery();
 }
 
@@ -355,6 +401,17 @@ async function readCaptureDate(file: File): Promise<string | null> {
     }
   } catch { /* Some images do not contain readable EXIF data. */ }
   return null;
+}
+
+function readFilenameDate(filename: string): string | null {
+  const match = filename.match(/(?:^|\D)(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})(?:\D|$)/);
+  if (!match) return null;
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText] = match;
+  const [year, month, day, hour, minute, second] = [yearText, monthText, dayText, hourText, minuteText, secondText].map(Number);
+  const date = new Date(year, month - 1, day, hour, minute, second);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day ||
+      date.getHours() !== hour || date.getMinutes() !== minute || date.getSeconds() !== second) return null;
+  return date.toISOString();
 }
 
 async function convertToWebp(file: File): Promise<File> {
@@ -401,17 +458,46 @@ function adminPhotoRow(photo: Photo): string {
       <span class="filename">${escapeHtml(photo.originalName ?? "photo")}</span>
       <label>day <input class="day-input" type="number" min="0" max="10000" value="${photo.beardDay}" /></label>
       <label>taken <input class="taken-input" type="datetime-local" value="${toLocalInput(photo.takenAt)}" /></label>
-      <div><button class="save-photo">save</button><button class="delete-photo">delete</button><span class="row-message"></span></div>
+      <div><button class="delete-photo">delete</button><span class="row-message" aria-live="polite"></span></div>
     </div>
   </article>`;
+}
+
+function fontChoices(group: "logo" | "body", current: string): string {
+  const sample = group === "logo" ? "beard gallery" : "day 24 · aug 11";
+  return `<div class="font-options" data-font-group="${group}">${fontOptions.map((option) =>
+    `<button type="button" class="font-option ${option.id === current ? "is-selected" : ""}" data-${group}-font="${option.id}" aria-pressed="${option.id === current}" style="--choice-font:${escapeHtml(option.family)}">
+      <span>${sample}</span><small>${option.label}</small>
+    </button>`).join("")}</div>`;
+}
+
+function appearanceSettings(data: GalleryData): string {
+  const presets = ["#f2df64", "#eee9df", "#d7e5cf", "#cfdde8", "#edcfca", "#ded2ef"];
+  return `<section class="settings-card" aria-labelledby="appearance-heading">
+    <div class="settings-heading"><span id="appearance-heading">appearance</span><small>click to preview and publish</small></div>
+    <div class="appearance-controls">
+      <div class="setting-row"><span class="setting-label">background</span><div class="color-controls">
+        <label class="color-picker-label" aria-label="Choose background color"><input id="background-color" type="color" value="${data.backgroundColor}" /></label>
+        <label class="hex-label">hex <input id="background-hex" type="text" value="${data.backgroundColor}" maxlength="7" spellcheck="false" /></label>
+        <div class="color-presets" aria-label="Background color presets">${presets.map((preset) =>
+          `<button type="button" data-color="${preset}" style="--preset:${preset}" aria-label="Use ${preset}"></button>`).join("")}</div>
+        <span class="setting-message" id="color-message" aria-live="polite"></span>
+      </div></div>
+      <div class="setting-row"><div class="setting-title"><span class="setting-label">logo font</span><span class="setting-message" id="logo-font-message" aria-live="polite"></span></div>${fontChoices("logo", data.logoFont)}</div>
+      <div class="setting-row"><div class="setting-title"><span class="setting-label">site font</span><span class="setting-message" id="body-font-message" aria-live="polite"></span></div>${fontChoices("body", data.bodyFont)}</div>
+    </div>
+  </section>`;
 }
 
 async function initAdmin(): Promise<void> {
   const status = await api<{ authenticated: boolean }>("/api/admin/status");
   if (!status.authenticated) { renderAdminLogin(); return; }
   const data = await api<GalleryData>("/api/admin/photos");
+  gallery = data;
+  applySiteAppearance(data);
   app.innerHTML = `<main class="admin-shell">
     <header class="admin-header"><a class="wordmark" href="/">beard gallery</a><div><a href="/">gallery</a><button id="logout">log out</button></div></header>
+    ${appearanceSettings(data)}
     <section class="upload-card"><form id="upload-form">
       <label>beard day <input name="beardDay" type="number" min="0" max="10000" required /></label>
       <label class="file-label">photos <input name="photos" type="file" accept="image/*" multiple required /></label>
@@ -422,7 +508,70 @@ async function initAdmin(): Promise<void> {
 
   document.querySelector("#logout")?.addEventListener("click", async () => { await api("/api/admin/logout", { method: "POST" }); renderAdminLogin(); });
   document.querySelector<HTMLFormElement>("#upload-form")!.addEventListener("submit", handleUpload);
+  bindBackgroundSettings();
   bindAdminRows();
+}
+
+function bindBackgroundSettings(): void {
+  const picker = document.querySelector<HTMLInputElement>("#background-color")!;
+  const hex = document.querySelector<HTMLInputElement>("#background-hex")!;
+  const message = document.querySelector<HTMLElement>("#color-message")!;
+  let timer = 0;
+  let version = 0;
+
+  const save = (color: string, immediate = false) => {
+    applyBackgroundColor(color);
+    picker.value = color;
+    hex.value = color;
+    gallery.backgroundColor = color;
+    window.clearTimeout(timer);
+    const currentVersion = ++version;
+    message.textContent = "saving…";
+    timer = window.setTimeout(async () => {
+      try {
+        await api("/api/admin/settings", {
+          method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ backgroundColor: color }),
+        });
+        if (currentVersion === version) message.textContent = "saved";
+      } catch (error) {
+        if (currentVersion === version) message.textContent = (error as Error).message;
+      }
+    }, immediate ? 0 : 500);
+  };
+
+  picker.addEventListener("input", () => save(picker.value.toLowerCase()));
+  hex.addEventListener("input", () => {
+    const value = hex.value.trim().toLowerCase();
+    if (/^#[0-9a-f]{6}$/.test(value)) save(value);
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-color]").forEach((button) => {
+    button.addEventListener("click", () => save(button.dataset.color!, true));
+  });
+
+  const selectFont = (group: "logo" | "body", font: string) => {
+    const key = group === "logo" ? "logoFont" : "bodyFont";
+    const fontMessage = document.querySelector<HTMLElement>(`#${group}-font-message`)!;
+    if (group === "logo") gallery.logoFont = font;
+    else gallery.bodyFont = font;
+    applyFontSettings(gallery.logoFont, gallery.bodyFont);
+    document.querySelectorAll<HTMLButtonElement>(`[data-font-group="${group}"] .font-option`).forEach((button) => {
+      const selected = button.dataset[`${group}Font`] === font;
+      button.classList.toggle("is-selected", selected);
+      button.setAttribute("aria-pressed", String(selected));
+    });
+    fontMessage.textContent = "saving…";
+    void api("/api/admin/settings", {
+      method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ [key]: font }),
+    }).then(() => { fontMessage.textContent = "saved"; })
+      .catch((error: Error) => { fontMessage.textContent = error.message; });
+  };
+
+  document.querySelectorAll<HTMLButtonElement>("[data-logo-font]").forEach((button) => {
+    button.addEventListener("click", () => selectFont("logo", button.dataset.logoFont!));
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-body-font]").forEach((button) => {
+    button.addEventListener("click", () => selectFont("body", button.dataset.bodyFont!));
+  });
 }
 
 async function handleUpload(event: SubmitEvent): Promise<void> {
@@ -435,7 +584,7 @@ async function handleUpload(event: SubmitEvent): Promise<void> {
   if (!sourceFiles.length) return;
   button.disabled = true;
   message.textContent = "reading photo dates…";
-  const captureDates = await Promise.all(sourceFiles.map(readCaptureDate));
+  const captureDates = await Promise.all(sourceFiles.map(async (file) => readFilenameDate(file.name) ?? await readCaptureDate(file)));
   message.textContent = "converting to webp…";
   let convertedFiles: File[];
   try {
@@ -466,21 +615,35 @@ async function handleUpload(event: SubmitEvent): Promise<void> {
 
 function bindAdminRows(): void {
   document.querySelectorAll<HTMLElement>(".admin-photo").forEach((row) => {
-    row.querySelector(".save-photo")?.addEventListener("click", async () => {
-      const message = row.querySelector<HTMLElement>(".row-message")!;
-      const takenValue = row.querySelector<HTMLInputElement>(".taken-input")!.value;
-      try {
-        await api(`/api/admin/photos/${row.dataset.photoId}`, {
-          method: "PATCH", headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            beardDay: Number(row.querySelector<HTMLInputElement>(".day-input")!.value),
-            takenAt: takenValue ? new Date(takenValue).toISOString() : null,
-          }),
-        });
-        message.textContent = "saved";
-        setTimeout(() => { message.textContent = ""; }, 1600);
-      } catch (error) { message.textContent = (error as Error).message; }
-    });
+    const dayInput = row.querySelector<HTMLInputElement>(".day-input")!;
+    const takenInput = row.querySelector<HTMLInputElement>(".taken-input")!;
+    const message = row.querySelector<HTMLElement>(".row-message")!;
+    let timer = 0;
+    let version = 0;
+
+    const save = () => {
+      window.clearTimeout(timer);
+      const currentVersion = ++version;
+      message.textContent = "saving…";
+      timer = window.setTimeout(async () => {
+        const takenValue = takenInput.value;
+        try {
+          await api(`/api/admin/photos/${row.dataset.photoId}`, {
+            method: "PATCH", headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              beardDay: Number(dayInput.value),
+              takenAt: takenValue ? new Date(takenValue).toISOString() : null,
+            }),
+          });
+          if (currentVersion === version) message.textContent = "saved";
+        } catch (error) {
+          if (currentVersion === version) message.textContent = (error as Error).message;
+        }
+      }, 600);
+    };
+
+    dayInput.addEventListener("input", save);
+    takenInput.addEventListener("input", save);
     row.querySelector(".delete-photo")?.addEventListener("click", async () => {
       if (!confirm("Delete this photo?")) return;
       await api(`/api/admin/photos/${row.dataset.photoId}`, { method: "DELETE" });

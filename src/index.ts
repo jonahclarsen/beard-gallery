@@ -25,6 +25,13 @@ interface VoteRow {
 
 const encoder = new TextEncoder();
 const jsonHeaders = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
+const defaultBackgroundColor = "#f2df64";
+const defaultLogoFont = "instrument-serif";
+const defaultBodyFont = "dm-mono";
+const allowedFonts = new Set([
+  "instrument-serif", "dm-mono", "cormorant-garamond", "playfair-display", "bodoni-moda",
+  "fraunces", "space-grotesk", "syne", "libre-baskerville", "manrope",
+]);
 
 function json(data: unknown, status = 200, headers: HeadersInit = {}): Response {
   return new Response(JSON.stringify(data), { status, headers: { ...jsonHeaders, ...headers } });
@@ -116,13 +123,40 @@ function serializePhoto(photo: PhotoRow, admin = false) {
   };
 }
 
+function parseBackgroundColor(value: unknown): string | null {
+  return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : null;
+}
+
+function parseFont(value: unknown): string | null {
+  return typeof value === "string" && allowedFonts.has(value) ? value : null;
+}
+
+async function getSiteSettings(env: Env): Promise<{ backgroundColor: string; logoFont: string; bodyFont: string }> {
+  try {
+    const result = await env.DB.prepare(
+      "SELECT key, value FROM settings WHERE key IN ('background_color', 'logo_font', 'body_font')",
+    ).all<{ key: string; value: string }>();
+    const settings = new Map(result.results.map((setting) => [setting.key, setting.value]));
+    return {
+      backgroundColor: parseBackgroundColor(settings.get("background_color")) ?? defaultBackgroundColor,
+      logoFont: parseFont(settings.get("logo_font")) ?? defaultLogoFont,
+      bodyFont: parseFont(settings.get("body_font")) ?? defaultBodyFont,
+    };
+  } catch {
+    return { backgroundColor: defaultBackgroundColor, logoFont: defaultLogoFont, bodyFont: defaultBodyFont };
+  }
+}
+
 async function gallery(env: Env, admin = false): Promise<Response> {
-  const results = await env.DB.prepare(
-    "SELECT id, beard_day, object_key, original_name, mime_type, taken_at, created_at FROM photos ORDER BY beard_day, created_at",
-  ).all<PhotoRow>();
+  const [results, settings] = await Promise.all([
+    env.DB.prepare(
+      "SELECT id, beard_day, object_key, original_name, mime_type, taken_at, created_at FROM photos ORDER BY beard_day, created_at",
+    ).all<PhotoRow>(),
+    getSiteSettings(env),
+  ]);
   const photos = results.results.map((photo) => serializePhoto(photo, admin));
   const maxDay = photos.reduce((max, photo) => Math.max(max, photo.beardDay), 0);
-  return json({ photos, maxDay });
+  return json({ photos, maxDay, ...settings });
 }
 
 async function servePhoto(id: string, env: Env): Promise<Response> {
@@ -164,14 +198,13 @@ async function uploadPhotos(request: Request, env: Env): Promise<Response> {
   if (files.length > 25) return json({ error: "Upload up to 25 photos at a time" }, 400);
 
   const created: ReturnType<typeof serializePhoto>[] = [];
-  for (const file of files) {
+  for (const [fileIndex, file] of files.entries()) {
     if (file.type !== "image/webp" || file.size > 25 * 1024 * 1024) {
       return json({ error: `${file.name} must be a WebP image smaller than 25 MB` }, 400);
     }
     const id = crypto.randomUUID();
     const objectKey = `photos/${id}`;
-    const detail = metadata.find((item) => item.name === file.name &&
-      (item.lastModified === undefined || item.lastModified === file.lastModified));
+    const detail = metadata[fileIndex] ?? metadata.find((item) => item.name === file.name);
     const takenAt = parseTakenAt(detail?.takenAt);
     await env.PHOTOS.put(objectKey, await file.arrayBuffer(), {
       metadata: { contentType: file.type || "image/webp" },
@@ -206,6 +239,31 @@ async function deletePhoto(id: string, env: Env): Promise<Response> {
   await env.PHOTOS.delete(photo.object_key);
   await env.DB.prepare("DELETE FROM photos WHERE id = ?").bind(id).run();
   return json({ ok: true });
+}
+
+async function updateSettings(request: Request, env: Env): Promise<Response> {
+  const body = await request.json<{ backgroundColor?: unknown; logoFont?: unknown; bodyFont?: unknown }>();
+  const updates: Array<{ key: string; value: string }> = [];
+  if (body.backgroundColor !== undefined) {
+    const value = parseBackgroundColor(body.backgroundColor);
+    if (!value) return json({ error: "Choose a valid color" }, 400);
+    updates.push({ key: "background_color", value });
+  }
+  if (body.logoFont !== undefined) {
+    const value = parseFont(body.logoFont);
+    if (!value) return json({ error: "Choose a valid logo font" }, 400);
+    updates.push({ key: "logo_font", value });
+  }
+  if (body.bodyFont !== undefined) {
+    const value = parseFont(body.bodyFont);
+    if (!value) return json({ error: "Choose a valid site font" }, 400);
+    updates.push({ key: "body_font", value });
+  }
+  if (!updates.length) return json({ error: "No settings to update" }, 400);
+  await env.DB.batch(updates.map(({ key, value }) => env.DB.prepare(
+    "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+  ).bind(key, value)));
+  return json({ ok: true, ...(await getSiteSettings(env)) });
 }
 
 function randomToken(): string {
@@ -325,6 +383,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
     if (!(await isAdmin(request, env))) return json({ error: "Unauthorized" }, 401);
     if (path === "/api/admin/photos" && request.method === "GET") return gallery(env, true);
     if (path === "/api/admin/photos" && request.method === "POST") return uploadPhotos(request, env);
+    if (path === "/api/admin/settings" && request.method === "PATCH") return updateSettings(request, env);
     const match = path.match(/^\/api\/admin\/photos\/([0-9a-f-]{36})$/i);
     if (match && request.method === "PATCH") return updatePhoto(match[1], request, env);
     if (match && request.method === "DELETE") return deletePhoto(match[1], env);

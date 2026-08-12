@@ -21,3 +21,13 @@ CREATE TABLE IF NOT EXISTS votes (
 
 CREATE UNIQUE INDEX IF NOT EXISTS votes_ip_key_idx ON votes (ip_key);
 CREATE INDEX IF NOT EXISTS votes_beard_day_idx ON votes (beard_day);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+INSERT OR IGNORE INTO settings (key, value) VALUES ('background_color', '#f2df64');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('logo_font', 'instrument-serif');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('body_font', 'dm-mono');
