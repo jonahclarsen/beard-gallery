@@ -81,6 +81,10 @@ function galleryItems(): Array<{ day: number; photo: Photo | null }> {
   return items;
 }
 
+function voteDays(): Array<{ day: number; photos: Photo[] }> {
+  return daysWithPhotos().filter(({ photos }) => photos.length > 0);
+}
+
 function renderGallery(): void {
   const items = galleryItems().map(({ day, photo }, index) => `<button class="photo-card ${photo ? "" : "is-placeholder"}" data-photo-index="${index}" aria-label="${photo ? "Open" : "No photo yet,"} ${formatDay(day)}">
     <img src="${photo?.url ?? placeholder}" alt="${photo ? `Beard ${formatDay(day)}` : ""}" draggable="false" loading="eager" /><span>${formatDay(day)}</span>
@@ -195,14 +199,22 @@ function showActivePhoto(): void {
   const time = figure.querySelector<HTMLTimeElement>("[data-modal-date]")!;
   time.textContent = date;
   time.dateTime = item.photo?.takenAt ?? "";
-  document.querySelector<HTMLButtonElement>("[data-photo-prev]")!.disabled = activePhotoIndex === 0;
-  document.querySelector<HTMLButtonElement>("[data-photo-next]")!.disabled = activePhotoIndex === items.length - 1;
+  document.querySelector<HTMLButtonElement>("[data-photo-prev]")!.disabled = findPhotoIndex(-1) === null;
+  document.querySelector<HTMLButtonElement>("[data-photo-next]")!.disabled = findPhotoIndex(1) === null;
+}
+
+function findPhotoIndex(direction: -1 | 1): number | null {
+  if (activePhotoIndex === null) return null;
+  const items = galleryItems();
+  for (let index = activePhotoIndex + direction; index >= 0 && index < items.length; index += direction) {
+    if (items[index].photo) return index;
+  }
+  return null;
 }
 
 function stepPhoto(direction: -1 | 1): void {
-  if (activePhotoIndex === null) return;
-  const next = activePhotoIndex + direction;
-  if (next < 0 || next >= galleryItems().length) return;
+  const next = findPhotoIndex(direction);
+  if (next === null) return;
   activePhotoIndex = next;
   showActivePhoto();
 }
@@ -215,24 +227,25 @@ function voteThumb(day: number, photos: Photo[], selectable = false): string {
 }
 
 function openVote(): void {
-  if (!gallery.maxDay && !gallery.photos.length) return;
+  if (!gallery.photos.length) return;
   if (voteStatus.hasVoted || voteStatus.isAdmin) {
     showResults();
     return;
   }
-  const days = daysWithPhotos();
   const root = mountOverlay(`<div class="overlay vote-overlay" role="dialog" aria-modal="true" aria-label="Vote">
     <button class="close-button dark" data-close aria-label="Close">×</button>
-    <div class="vote-panel">
-      <div class="vote-grid">${days.map(({ day, photos }) => voteThumb(day, photos)).join("")}</div>
-      <button class="ready-button" id="ready-button">i’m ready</button>
+    <div class="vote-panel review-panel">
+      <div class="vote-grid review-grid">${gallery.photos.map((photo) => `<div class="vote-day review-photo">
+        <img src="${photo.url}" alt="Beard ${formatDay(photo.beardDay)}" /><span>${formatDay(photo.beardDay)}</span>
+      </div>`).join("")}</div>
+      <button class="vote-now-button" id="vote-now-button">vote now</button>
     </div>
   </div>`);
-  root.querySelector("#ready-button")?.addEventListener("click", showVotePicker);
+  root.querySelector("#vote-now-button")?.addEventListener("click", showVotePicker);
 }
 
 function showVotePicker(): void {
-  const days = daysWithPhotos();
+  const days = voteDays();
   const root = mountOverlay(`<div class="overlay vote-overlay" role="dialog" aria-modal="true" aria-label="Pick your favorite beard day">
     <button class="close-button dark" data-close aria-label="Close">×</button>
     <div class="vote-panel"><p class="vote-prompt">pick one.</p>
@@ -281,12 +294,14 @@ function renderResults(results: VoteResult[]): void {
   if (!container) return;
   const counts = new Map(results.map((result) => [result.beardDay, result.votes]));
   const total = results.reduce((sum, result) => sum + result.votes, 0);
-  container.innerHTML = daysWithPhotos().map(({ day }) => {
+  container.innerHTML = voteDays().map(({ day, photos }) => {
     const count = counts.get(day) ?? 0;
-    const width = total ? Math.max(2, count / total * 100) : 0;
-    return `<div class="result-row ${voteStatus.beardDay === day ? "is-mine" : ""}">
-      <span>${formatDay(day)}</span><div><i style="width:${width}%"></i></div><b>${count}</b>
-    </div>`;
+    const percentage = total ? Math.round(count / total * 100) : 0;
+    return `<article class="result-card ${voteStatus.beardDay === day ? "is-mine" : ""}">
+      <img src="${photos[0].url}" alt="Beard ${formatDay(day)}" />
+      <div class="result-card-copy"><span>${formatDay(day)}</span><b>${count} ${count === 1 ? "vote" : "votes"} · ${percentage}%</b></div>
+      <div class="result-bar" aria-label="${percentage}% of votes"><i style="width:${percentage}%"></i></div>
+    </article>`;
   }).join("");
 }
 
@@ -485,7 +500,12 @@ async function boot(): Promise<void> {
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeOverlay();
-  else if (event.key === "ArrowLeft" && activePhotoIndex !== null) stepPhoto(-1);
-  else if (event.key === "ArrowRight" && activePhotoIndex !== null) stepPhoto(1);
+  else if (event.key === "ArrowLeft" && activePhotoIndex !== null) {
+    event.preventDefault();
+    stepPhoto(-1);
+  } else if (event.key === "ArrowRight" && activePhotoIndex !== null) {
+    event.preventDefault();
+    stepPhoto(1);
+  }
 });
 void boot();

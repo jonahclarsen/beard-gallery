@@ -262,10 +262,9 @@ async function submitVote(request: Request, env: Env): Promise<Response> {
   const body = await request.json<{ beardDay?: unknown }>();
   const beardDay = parseDay(body.beardDay);
   if (beardDay === null) return json({ error: "Choose a beard day" }, 400);
-  const maxRow = await env.DB.prepare("SELECT COALESCE(MAX(beard_day), 0) AS max_day FROM photos").first<{ max_day: number }>();
-  const maxDay = Number(maxRow?.max_day ?? 0);
-  const minDay = maxDay === 0 ? 0 : 1;
-  if (beardDay < minDay || beardDay > maxDay) return json({ error: "That beard day is not available" }, 400);
+  const eligibleDay = await env.DB.prepare("SELECT 1 AS eligible FROM photos WHERE beard_day = ? LIMIT 1")
+    .bind(beardDay).first<{ eligible: number }>();
+  if (!eligibleDay) return json({ error: "That beard day is not available" }, 400);
 
   const { identity, vote } = await findVote(request, env);
   if (vote) {
