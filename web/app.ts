@@ -138,7 +138,10 @@ function renderGallery(): void {
   app.innerHTML = `<main class="site-shell">
     <header class="site-header">
       <a class="wordmark" href="/" aria-label="Beard gallery">beard gallery</a>
-      <button class="text-button" id="vote-button">vote</button>
+      <nav class="header-actions" aria-label="Gallery actions">
+        <button class="text-button" id="vote-button">vote</button>
+        ${voteStatus.isAdmin ? `<a class="text-button" href="/admin">admin</a>` : ""}
+      </nav>
     </header>
     <section class="gallery-wrap" aria-label="Beard days">
       ${items ? `<div class="gallery" id="gallery">${items}</div>` : `<div class="empty-mark"><img src="${placeholder}" alt="" /><span>soon.</span></div>`}
