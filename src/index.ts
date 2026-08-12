@@ -28,6 +28,7 @@ const jsonHeaders = { "content-type": "application/json; charset=utf-8", "cache-
 const defaultBackgroundColor = "#f2df64";
 const defaultLogoFont = "instrument-serif";
 const defaultBodyFont = "dm-mono";
+const defaultFontScale = 100;
 const allowedFonts = new Set([
   "instrument-serif", "dm-mono", "cormorant-garamond", "playfair-display", "bodoni-moda",
   "fraunces", "space-grotesk", "syne", "libre-baskerville", "manrope",
@@ -131,19 +132,25 @@ function parseFont(value: unknown): string | null {
   return typeof value === "string" && allowedFonts.has(value) ? value : null;
 }
 
-async function getSiteSettings(env: Env): Promise<{ backgroundColor: string; logoFont: string; bodyFont: string }> {
+function parseFontScale(value: unknown): number | null {
+  const scale = typeof value === "number" ? value : Number(value);
+  return Number.isInteger(scale) && scale >= 80 && scale <= 150 ? scale : null;
+}
+
+async function getSiteSettings(env: Env): Promise<{ backgroundColor: string; logoFont: string; bodyFont: string; fontScale: number }> {
   try {
     const result = await env.DB.prepare(
-      "SELECT key, value FROM settings WHERE key IN ('background_color', 'logo_font', 'body_font')",
+      "SELECT key, value FROM settings WHERE key IN ('background_color', 'logo_font', 'body_font', 'font_scale')",
     ).all<{ key: string; value: string }>();
     const settings = new Map(result.results.map((setting) => [setting.key, setting.value]));
     return {
       backgroundColor: parseBackgroundColor(settings.get("background_color")) ?? defaultBackgroundColor,
       logoFont: parseFont(settings.get("logo_font")) ?? defaultLogoFont,
       bodyFont: parseFont(settings.get("body_font")) ?? defaultBodyFont,
+      fontScale: parseFontScale(settings.get("font_scale")) ?? defaultFontScale,
     };
   } catch {
-    return { backgroundColor: defaultBackgroundColor, logoFont: defaultLogoFont, bodyFont: defaultBodyFont };
+    return { backgroundColor: defaultBackgroundColor, logoFont: defaultLogoFont, bodyFont: defaultBodyFont, fontScale: defaultFontScale };
   }
 }
 
@@ -242,7 +249,7 @@ async function deletePhoto(id: string, env: Env): Promise<Response> {
 }
 
 async function updateSettings(request: Request, env: Env): Promise<Response> {
-  const body = await request.json<{ backgroundColor?: unknown; logoFont?: unknown; bodyFont?: unknown }>();
+  const body = await request.json<{ backgroundColor?: unknown; logoFont?: unknown; bodyFont?: unknown; fontScale?: unknown }>();
   const updates: Array<{ key: string; value: string }> = [];
   if (body.backgroundColor !== undefined) {
     const value = parseBackgroundColor(body.backgroundColor);
@@ -258,6 +265,11 @@ async function updateSettings(request: Request, env: Env): Promise<Response> {
     const value = parseFont(body.bodyFont);
     if (!value) return json({ error: "Choose a valid site font" }, 400);
     updates.push({ key: "body_font", value });
+  }
+  if (body.fontScale !== undefined) {
+    const value = parseFontScale(body.fontScale);
+    if (value === null) return json({ error: "Choose a text size from 80% to 150%" }, 400);
+    updates.push({ key: "font_scale", value: String(value) });
   }
   if (!updates.length) return json({ error: "No settings to update" }, 400);
   await env.DB.batch(updates.map(({ key, value }) => env.DB.prepare(

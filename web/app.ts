@@ -26,6 +26,7 @@ interface GalleryData {
   backgroundColor: string;
   logoFont: string;
   bodyFont: string;
+  fontScale: number;
 }
 
 interface VoteResult {
@@ -49,7 +50,7 @@ const fontOptions = [
   { id: "manrope", label: "Manrope", family: '"Manrope", sans-serif' },
 ] as const;
 let gallery: GalleryData = {
-  photos: [], maxDay: 0, backgroundColor: defaultBackgroundColor, logoFont: "instrument-serif", bodyFont: "dm-mono",
+  photos: [], maxDay: 0, backgroundColor: defaultBackgroundColor, logoFont: "instrument-serif", bodyFont: "dm-mono", fontScale: 100,
 };
 let voteStatus = { hasVoted: false, beardDay: null as number | null, isAdmin: false };
 let voteSocket: WebSocket | null = null;
@@ -95,9 +96,15 @@ function applyFontSettings(logoFont: string, bodyFont: string): void {
   document.documentElement.style.setProperty("--body-font", body.family);
 }
 
-function applySiteAppearance(data: Pick<GalleryData, "backgroundColor" | "logoFont" | "bodyFont">): void {
+function applyFontScale(fontScale: number): void {
+  const safeScale = Number.isInteger(fontScale) && fontScale >= 80 && fontScale <= 150 ? fontScale : 100;
+  document.documentElement.style.setProperty("--site-font-size", `${16 * safeScale / 100}px`);
+}
+
+function applySiteAppearance(data: Pick<GalleryData, "backgroundColor" | "logoFont" | "bodyFont" | "fontScale">): void {
   applyBackgroundColor(data.backgroundColor);
   applyFontSettings(data.logoFont, data.bodyFont);
+  applyFontScale(data.fontScale);
 }
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
@@ -529,6 +536,9 @@ function appearanceSettings(data: GalleryData): string {
           `<button type="button" data-color="${preset}" style="--preset:${preset}" aria-label="Use ${preset}"></button>`).join("")}</div>
         <span class="setting-message" id="color-message" aria-live="polite"></span>
       </div></div>
+      <div class="setting-row"><div class="setting-title"><span class="setting-label">text size</span><span class="setting-message" id="font-scale-message" aria-live="polite"></span></div>
+        <div class="font-scale-controls"><input id="font-scale" type="range" min="80" max="150" step="5" value="${data.fontScale}" aria-label="Site text size" /><output id="font-scale-value" for="font-scale">${data.fontScale}%</output><small>logo stays fixed</small></div>
+      </div>
       <div class="setting-row"><div class="setting-title"><span class="setting-label">logo font</span><span class="setting-message" id="logo-font-message" aria-live="polite"></span></div>${fontChoices("logo", data.logoFont)}</div>
       <div class="setting-row"><div class="setting-title"><span class="setting-label">site font</span><span class="setting-message" id="body-font-message" aria-live="polite"></span></div>${fontChoices("body", data.bodyFont)}</div>
     </div>
@@ -592,6 +602,31 @@ function bindBackgroundSettings(): void {
   });
   document.querySelectorAll<HTMLButtonElement>("[data-color]").forEach((button) => {
     button.addEventListener("click", () => save(button.dataset.color!, true));
+  });
+
+  const fontScale = document.querySelector<HTMLInputElement>("#font-scale")!;
+  const fontScaleValue = document.querySelector<HTMLOutputElement>("#font-scale-value")!;
+  const fontScaleMessage = document.querySelector<HTMLElement>("#font-scale-message")!;
+  let fontScaleTimer = 0;
+  let fontScaleVersion = 0;
+  fontScale.addEventListener("input", () => {
+    const value = Number(fontScale.value);
+    gallery.fontScale = value;
+    fontScaleValue.value = `${value}%`;
+    applyFontScale(value);
+    window.clearTimeout(fontScaleTimer);
+    const currentVersion = ++fontScaleVersion;
+    fontScaleMessage.textContent = "saving…";
+    fontScaleTimer = window.setTimeout(async () => {
+      try {
+        await api("/api/admin/settings", {
+          method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ fontScale: value }),
+        });
+        if (currentVersion === fontScaleVersion) fontScaleMessage.textContent = "saved";
+      } catch (error) {
+        if (currentVersion === fontScaleVersion) fontScaleMessage.textContent = (error as Error).message;
+      }
+    }, 400);
   });
 
   const selectFont = (group: "logo" | "body", font: string) => {

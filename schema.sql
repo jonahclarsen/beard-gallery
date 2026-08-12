@@ -31,3 +31,4 @@ CREATE TABLE IF NOT EXISTS settings (
 INSERT OR IGNORE INTO settings (key, value) VALUES ('background_color', '#f2df64');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('logo_font', 'instrument-serif');
 INSERT OR IGNORE INTO settings (key, value) VALUES ('body_font', 'dm-mono');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('font_scale', '100');
