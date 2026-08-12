@@ -362,6 +362,20 @@ async function submitVote(request: Request, env: Env): Promise<Response> {
   );
 }
 
+async function removeVote(request: Request, env: Env): Promise<Response> {
+  const { identity, vote } = await findVote(request, env);
+  if (vote) {
+    await env.DB.prepare("DELETE FROM votes WHERE voter_key = ?").bind(vote.voter_key).run();
+    const room = env.VOTE_ROOM.get(env.VOTE_ROOM.idFromName("global"));
+    await room.fetch("https://vote-room.internal/broadcast", { method: "POST" });
+  }
+  return json(
+    { ok: true },
+    200,
+    identity.shouldSetCookie ? { "set-cookie": voterCookie(identity.token) } : {},
+  );
+}
+
 async function liveVotes(request: Request, env: Env): Promise<Response> {
   const [{ vote }, admin] = await Promise.all([findVote(request, env), isAdmin(request, env)]);
   if (!vote && !admin) return json({ error: "Vote first to see results" }, 403);
@@ -388,6 +402,7 @@ async function handleApi(request: Request, env: Env, path: string): Promise<Resp
   if (path === "/api/admin/status" && request.method === "GET") return json({ authenticated: await isAdmin(request, env) });
   if (path === "/api/vote/status" && request.method === "GET") return voteStatus(request, env);
   if (path === "/api/votes" && request.method === "PUT") return submitVote(request, env);
+  if (path === "/api/votes" && request.method === "DELETE") return removeVote(request, env);
   if (path === "/api/votes/results" && request.method === "GET") return publicVoteResults(request, env);
   if (path === "/api/votes/live" && request.method === "GET") return liveVotes(request, env);
 

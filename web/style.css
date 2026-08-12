@@ -99,6 +99,11 @@ button { color: inherit; }
 .vote-now-button:hover, .vote-now-button:focus-visible { background: transparent; color: var(--ink); }
 .vote-prompt { margin: 0 auto 38px; text-align: center; font-family: var(--logo-font); font-size: 2.125rem; font-weight: 400; line-height: 1; grid-column: 1/-1; }
 .vote-panel:has(.vote-prompt) { display: block; }
+.vote-picker-actions { display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 42px; }
+.remove-vote { border: 0; border-bottom: 1px solid currentColor; padding: 8px 0; background: transparent; color: var(--muted); cursor: pointer; font-size: .6875rem; }
+.remove-vote:hover, .remove-vote:focus-visible { color: var(--ink); }
+.remove-vote:disabled { opacity: .45; cursor: default; }
+.vote-picker-actions span { color: var(--muted); font-size: .625rem; }
 
 .results-panel { width: min(1040px, 100%); margin: auto; }
 .results { width: 100%; align-self: center; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 28px 18px; }

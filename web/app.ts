@@ -350,6 +350,7 @@ function showVotePicker(): void {
     <button class="close-button dark" data-close aria-label="Close">×</button>
     <div class="vote-panel"><p class="vote-prompt">pick one.</p>
       <div class="vote-grid pick-grid">${days.map(({ day, photos }) => voteThumb(day, photos, true)).join("")}</div>
+      ${voteStatus.hasVoted ? `<div class="vote-picker-actions"><button class="remove-vote" id="remove-vote">remove my vote</button><span id="remove-vote-message" aria-live="polite"></span></div>` : ""}
     </div>
   </div>`);
   root.querySelectorAll<HTMLButtonElement>("[data-vote-day]").forEach((button) => {
@@ -368,6 +369,21 @@ function showVotePicker(): void {
         alert((error as Error).message);
       }
     });
+  });
+  root.querySelector<HTMLButtonElement>("#remove-vote")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget as HTMLButtonElement;
+    const message = root.querySelector<HTMLElement>("#remove-vote-message")!;
+    button.disabled = true;
+    message.textContent = "removing…";
+    try {
+      await api("/api/votes", { method: "DELETE" });
+      voteStatus.hasVoted = false;
+      voteStatus.beardDay = null;
+      closeOverlay();
+    } catch (error) {
+      button.disabled = false;
+      message.textContent = (error as Error).message;
+    }
   });
 }
 
