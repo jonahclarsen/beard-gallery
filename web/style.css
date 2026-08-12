@@ -1,9 +1,9 @@
 :root {
   color: #24211d;
-  background: #eee9df;
+  background: #f2df64;
   font-family: "DM Mono", ui-monospace, monospace;
   font-synthesis: none;
-  --paper: #eee9df;
+  --paper: #f2df64;
   --ink: #24211d;
   --muted: #8c8477;
   --line: rgba(36, 33, 29, .17);
@@ -64,7 +64,7 @@ button { color: inherit; }
 .close-button { position: fixed; z-index: 22; right: 30px; top: 22px; width: 44px; height: 44px; padding: 0; border: 0; background: transparent; color: #f3eee5; font: 300 35px/1 sans-serif; cursor: pointer; }
 .close-button.dark { color: var(--ink); }
 .photo-modal { max-width: min(90vw, 980px); max-height: 88vh; margin: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
-.photo-modal img { display: block; max-width: 90vw; max-height: calc(88vh - 58px); object-fit: contain; background: #ded8cc; box-shadow: 0 28px 80px rgba(0,0,0,.3); }
+.photo-modal img { display: block; max-width: 90vw; max-height: calc(88vh - 58px); object-fit: contain; background: var(--paper); box-shadow: 0 28px 80px rgba(0,0,0,.3); }
 .photo-modal figcaption { color: #f3eee5; display: flex; justify-content: space-between; align-items: baseline; padding-top: 15px; }
 .photo-modal figcaption strong { font: 400 25px/1 "Instrument Serif", serif; }
 .photo-modal figcaption time { color: rgba(243,238,229,.57); font-size: 9px; letter-spacing: .07em; }

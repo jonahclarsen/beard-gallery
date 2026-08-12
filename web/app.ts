@@ -92,7 +92,7 @@ function renderGallery(): void {
 
   app.innerHTML = `<main class="site-shell">
     <header class="site-header">
-      <a class="wordmark" href="/" aria-label="Beard gallery">beard.</a>
+      <a class="wordmark" href="/" aria-label="Beard gallery">beard gallery</a>
       <button class="text-button" id="vote-button">vote</button>
     </header>
     <section class="gallery-wrap" aria-label="Beard days">
@@ -326,7 +326,7 @@ async function initGallery(): Promise<void> {
 }
 
 function renderAdminLogin(): void {
-  app.innerHTML = `<main class="admin-login"><a class="wordmark" href="/">beard.</a>
+  app.innerHTML = `<main class="admin-login"><a class="wordmark" href="/">beard gallery</a>
     <form id="login-form"><label for="password">password</label><input id="password" name="password" type="password" autocomplete="current-password" required autofocus />
       <button type="submit">enter</button><p class="form-message" id="login-message"></p></form>
   </main>`;
@@ -411,7 +411,7 @@ async function initAdmin(): Promise<void> {
   if (!status.authenticated) { renderAdminLogin(); return; }
   const data = await api<GalleryData>("/api/admin/photos");
   app.innerHTML = `<main class="admin-shell">
-    <header class="admin-header"><a class="wordmark" href="/">beard.</a><div><a href="/">gallery</a><button id="logout">log out</button></div></header>
+    <header class="admin-header"><a class="wordmark" href="/">beard gallery</a><div><a href="/">gallery</a><button id="logout">log out</button></div></header>
     <section class="upload-card"><form id="upload-form">
       <label>beard day <input name="beardDay" type="number" min="0" max="10000" required /></label>
       <label class="file-label">photos <input name="photos" type="file" accept="image/*" multiple required /></label>
