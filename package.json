@@ -1,0 +1,25 @@
+{
+  "name": "beard-gallery",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "check": "tsc --noEmit",
+    "dev": "vite build --watch & wrangler dev",
+    "deploy": "vite build && wrangler deploy",
+    "db:local": "wrangler d1 execute beard-gallery --local --file=./schema.sql",
+    "db:remote": "wrangler d1 execute beard-gallery --remote --file=./schema.sql"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260812.1",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.1",
+    "wrangler": "^4.28.1"
+  },
+  "dependencies": {
+    "@fontsource/dm-mono": "^5.2.6",
+    "@fontsource/instrument-serif": "^5.2.6",
+    "exifr": "^7.1.3"
+  }
+}

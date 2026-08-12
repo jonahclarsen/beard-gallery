@@ -1,0 +1,491 @@
+import { parse as parseExif } from "exifr";
+import "@fontsource/dm-mono/300.css";
+import "@fontsource/dm-mono/400.css";
+import "@fontsource/instrument-serif/400.css";
+
+interface Photo {
+  id: string;
+  beardDay: number;
+  url: string;
+  takenAt: string | null;
+  originalName?: string;
+  createdAt?: string;
+}
+
+interface GalleryData {
+  photos: Photo[];
+  maxDay: number;
+}
+
+interface VoteResult {
+  beardDay: number;
+  votes: number;
+}
+
+const app = document.querySelector<HTMLDivElement>("#app")!;
+const placeholder = "/placeholder.svg";
+let gallery: GalleryData = { photos: [], maxDay: 0 };
+let voteStatus = { hasVoted: false, beardDay: null as number | null, isAdmin: false };
+let voteSocket: WebSocket | null = null;
+let activePhotoIndex: number | null = null;
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>'"]/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
+  })[character]!);
+}
+
+function formatDay(day: number): string {
+  return `day ${day}`;
+}
+
+function formatTakenAt(value: string | null): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+  }).format(date);
+}
+
+function toLocalInput(value: string | null): string {
+  if (!value) return "";
+  const date = new Date(value);
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+async function api<T>(path: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(path, options);
+  const body = await response.json().catch(() => ({})) as T & { error?: string };
+  if (!response.ok) throw new Error(body.error || "Something went wrong");
+  return body;
+}
+
+function daysWithPhotos(): Array<{ day: number; photos: Photo[] }> {
+  if (!gallery.maxDay && !gallery.photos.length) return [];
+  const start = gallery.maxDay === 0 ? 0 : 1;
+  const days: Array<{ day: number; photos: Photo[] }> = [];
+  for (let day = start; day <= gallery.maxDay; day += 1) {
+    days.push({ day, photos: gallery.photos.filter((photo) => photo.beardDay === day) });
+  }
+  return days;
+}
+
+function galleryItems(): Array<{ day: number; photo: Photo | null }> {
+  const items: Array<{ day: number; photo: Photo | null }> = [];
+  for (const { day, photos } of daysWithPhotos()) {
+    if (photos.length) photos.forEach((photo) => items.push({ day, photo }));
+    else items.push({ day, photo: null });
+  }
+  return items;
+}
+
+function renderGallery(): void {
+  const items = galleryItems().map(({ day, photo }, index) => `<button class="photo-card ${photo ? "" : "is-placeholder"}" data-photo-index="${index}" aria-label="${photo ? "Open" : "No photo yet,"} ${formatDay(day)}">
+    <img src="${photo?.url ?? placeholder}" alt="${photo ? `Beard ${formatDay(day)}` : ""}" draggable="false" loading="eager" /><span>${formatDay(day)}</span>
+  </button>`).join("");
+
+  app.innerHTML = `<main class="site-shell">
+    <header class="site-header">
+      <a class="wordmark" href="/" aria-label="Beard gallery">beard.</a>
+      <button class="text-button" id="vote-button">vote</button>
+    </header>
+    <section class="gallery-wrap" aria-label="Beard days">
+      ${items ? `<div class="gallery" id="gallery">${items}</div>` : `<div class="empty-mark"><img src="${placeholder}" alt="" /><span>soon.</span></div>`}
+    </section>
+    <div id="overlay-root"></div>
+  </main>`;
+
+  document.querySelector("#vote-button")?.addEventListener("click", openVote);
+  document.querySelectorAll<HTMLButtonElement>(".photo-card").forEach((card) => {
+    card.addEventListener("click", () => openPhoto(Number(card.dataset.photoIndex)));
+  });
+  setupGalleryMotion();
+}
+
+function setupGalleryMotion(): void {
+  const track = document.querySelector<HTMLDivElement>("#gallery");
+  if (!track) return;
+  let pointerX = window.innerWidth / 2;
+  let active = false;
+  let frame = 0;
+
+  const scaleCards = () => {
+    const center = pointerX;
+    track.querySelectorAll<HTMLElement>(".photo-card").forEach((card) => {
+      const box = card.getBoundingClientRect();
+      const distance = Math.abs(box.left + box.width / 2 - center);
+      const influence = Math.max(0, 1 - distance / Math.min(window.innerWidth * 0.48, 520));
+      card.style.setProperty("--scale", String(0.9 + influence * 0.14));
+      card.style.setProperty("--lift", `${-influence * 9}px`);
+    });
+  };
+
+  const drift = () => {
+    if (!active) return;
+    const edge = Math.max(0, Math.abs(pointerX / window.innerWidth * 2 - 1) - 0.42) / 0.58;
+    const direction = pointerX < window.innerWidth / 2 ? -1 : 1;
+    track.scrollLeft += direction * edge * edge * 5;
+    scaleCards();
+    frame = requestAnimationFrame(drift);
+  };
+
+  track.addEventListener("pointerenter", () => { active = true; cancelAnimationFrame(frame); drift(); });
+  track.addEventListener("pointerleave", () => { active = false; cancelAnimationFrame(frame); });
+  track.addEventListener("pointermove", (event) => { pointerX = event.clientX; scaleCards(); });
+  track.addEventListener("scroll", scaleCards, { passive: true });
+  track.addEventListener("wheel", (event) => {
+    if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
+      event.preventDefault();
+      track.scrollLeft += event.deltaY * 0.8;
+    }
+  }, { passive: false });
+  scaleCards();
+}
+
+function closeOverlay(): void {
+  document.querySelector("#overlay-root")!.innerHTML = "";
+  document.body.classList.remove("overlay-open");
+  voteSocket?.close();
+  voteSocket = null;
+  activePhotoIndex = null;
+}
+
+function mountOverlay(markup: string): HTMLElement {
+  const root = document.querySelector<HTMLElement>("#overlay-root")!;
+  root.innerHTML = markup;
+  document.body.classList.add("overlay-open");
+  root.querySelectorAll<HTMLElement>("[data-close]").forEach((button) => button.addEventListener("click", closeOverlay));
+  root.querySelector(".overlay")?.addEventListener("click", (event) => {
+    if ((event.target as HTMLElement).classList.contains("overlay")) closeOverlay();
+  });
+  return root;
+}
+
+function openPhoto(index: number): void {
+  activePhotoIndex = index;
+  mountOverlay(`<div class="overlay photo-overlay" role="dialog" aria-modal="true" aria-label="Photo viewer">
+    <button class="close-button" data-close aria-label="Close">×</button>
+    <button class="photo-nav photo-nav-prev" data-photo-prev aria-label="Previous photo">←</button>
+    <figure class="photo-modal">
+      <img data-modal-image src="" alt="" />
+      <figcaption><strong data-modal-day></strong><time data-modal-date></time></figcaption>
+    </figure>
+    <button class="photo-nav photo-nav-next" data-photo-next aria-label="Next photo">→</button>
+  </div>`);
+  document.querySelector("[data-photo-prev]")?.addEventListener("click", () => stepPhoto(-1));
+  document.querySelector("[data-photo-next]")?.addEventListener("click", () => stepPhoto(1));
+  showActivePhoto();
+}
+
+function showActivePhoto(): void {
+  if (activePhotoIndex === null) return;
+  const items = galleryItems();
+  const item = items[activePhotoIndex];
+  if (!item) return;
+  const src = item.photo?.url ?? placeholder;
+  const date = formatTakenAt(item.photo?.takenAt ?? null);
+  const figure = document.querySelector<HTMLElement>(".photo-modal")!;
+  const image = figure.querySelector<HTMLImageElement>("[data-modal-image]")!;
+  image.src = src;
+  image.alt = `Beard ${formatDay(item.day)}`;
+  figure.classList.toggle("is-placeholder", !item.photo);
+  figure.querySelector<HTMLElement>("[data-modal-day]")!.textContent = formatDay(item.day);
+  const time = figure.querySelector<HTMLTimeElement>("[data-modal-date]")!;
+  time.textContent = date;
+  time.dateTime = item.photo?.takenAt ?? "";
+  document.querySelector<HTMLButtonElement>("[data-photo-prev]")!.disabled = activePhotoIndex === 0;
+  document.querySelector<HTMLButtonElement>("[data-photo-next]")!.disabled = activePhotoIndex === items.length - 1;
+}
+
+function stepPhoto(direction: -1 | 1): void {
+  if (activePhotoIndex === null) return;
+  const next = activePhotoIndex + direction;
+  if (next < 0 || next >= galleryItems().length) return;
+  activePhotoIndex = next;
+  showActivePhoto();
+}
+
+function voteThumb(day: number, photos: Photo[], selectable = false): string {
+  const photo = photos[0];
+  return `<button class="vote-day" data-vote-day="${day}" ${selectable ? "" : "disabled"} aria-label="${selectable ? "Vote for" : "View"} ${formatDay(day)}">
+    <img src="${photo?.url ?? placeholder}" alt="" /><span>${formatDay(day)}</span>
+  </button>`;
+}
+
+function openVote(): void {
+  if (!gallery.maxDay && !gallery.photos.length) return;
+  if (voteStatus.hasVoted || voteStatus.isAdmin) {
+    showResults();
+    return;
+  }
+  const days = daysWithPhotos();
+  const root = mountOverlay(`<div class="overlay vote-overlay" role="dialog" aria-modal="true" aria-label="Vote">
+    <button class="close-button dark" data-close aria-label="Close">×</button>
+    <div class="vote-panel">
+      <div class="vote-grid">${days.map(({ day, photos }) => voteThumb(day, photos)).join("")}</div>
+      <button class="ready-button" id="ready-button">i’m ready</button>
+    </div>
+  </div>`);
+  root.querySelector("#ready-button")?.addEventListener("click", showVotePicker);
+}
+
+function showVotePicker(): void {
+  const days = daysWithPhotos();
+  const root = mountOverlay(`<div class="overlay vote-overlay" role="dialog" aria-modal="true" aria-label="Pick your favorite beard day">
+    <button class="close-button dark" data-close aria-label="Close">×</button>
+    <div class="vote-panel"><p class="vote-prompt">pick one.</p>
+      <div class="vote-grid pick-grid">${days.map(({ day, photos }) => voteThumb(day, photos, true)).join("")}</div>
+    </div>
+  </div>`);
+  root.querySelectorAll<HTMLButtonElement>("[data-vote-day]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const day = Number(button.dataset.voteDay);
+      button.classList.add("is-pending");
+      try {
+        await api("/api/votes", {
+          method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ beardDay: day }),
+        });
+        voteStatus.hasVoted = true;
+        voteStatus.beardDay = day;
+        await showResults();
+      } catch (error) {
+        button.classList.remove("is-pending");
+        alert((error as Error).message);
+      }
+    });
+  });
+}
+
+async function showResults(): Promise<void> {
+  const root = mountOverlay(`<div class="overlay vote-overlay" role="dialog" aria-modal="true" aria-label="Vote results">
+    <button class="close-button dark" data-close aria-label="Close">×</button>
+    <div class="results-panel"><div class="results" id="results"><span class="loading-dot">·</span></div>
+      <button class="change-vote" id="change-vote">${voteStatus.hasVoted ? "change my vote" : "vote"}</button>
+    </div>
+  </div>`);
+  root.querySelector("#change-vote")?.addEventListener("click", showVotePicker);
+  try {
+    const data = await api<{ results: VoteResult[] }>("/api/votes/results");
+    renderResults(data.results);
+    connectVoteSocket();
+  } catch (error) {
+    if (!voteStatus.hasVoted && !voteStatus.isAdmin) showVotePicker();
+    else document.querySelector("#results")!.textContent = (error as Error).message;
+  }
+}
+
+function renderResults(results: VoteResult[]): void {
+  const container = document.querySelector<HTMLElement>("#results");
+  if (!container) return;
+  const counts = new Map(results.map((result) => [result.beardDay, result.votes]));
+  const total = results.reduce((sum, result) => sum + result.votes, 0);
+  container.innerHTML = daysWithPhotos().map(({ day }) => {
+    const count = counts.get(day) ?? 0;
+    const width = total ? Math.max(2, count / total * 100) : 0;
+    return `<div class="result-row ${voteStatus.beardDay === day ? "is-mine" : ""}">
+      <span>${formatDay(day)}</span><div><i style="width:${width}%"></i></div><b>${count}</b>
+    </div>`;
+  }).join("");
+}
+
+function connectVoteSocket(): void {
+  voteSocket?.close();
+  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  voteSocket = new WebSocket(`${protocol}//${location.host}/api/votes/live`);
+  voteSocket.addEventListener("message", (event) => {
+    try {
+      const data = JSON.parse(event.data) as { type: string; results: VoteResult[] };
+      if (data.type === "results") renderResults(data.results);
+    } catch { /* Ignore malformed live messages. */ }
+  });
+}
+
+async function initGallery(): Promise<void> {
+  [gallery, voteStatus] = await Promise.all([
+    api<GalleryData>("/api/gallery"),
+    api<typeof voteStatus>("/api/vote/status"),
+  ]);
+  renderGallery();
+}
+
+function renderAdminLogin(): void {
+  app.innerHTML = `<main class="admin-login"><a class="wordmark" href="/">beard.</a>
+    <form id="login-form"><label for="password">password</label><input id="password" name="password" type="password" autocomplete="current-password" required autofocus />
+      <button type="submit">enter</button><p class="form-message" id="login-message"></p></form>
+  </main>`;
+  document.querySelector<HTMLFormElement>("#login-form")!.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const message = document.querySelector<HTMLElement>("#login-message")!;
+    try {
+      await api("/api/admin/login", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ password: new FormData(form).get("password") }),
+      });
+      await initAdmin();
+    } catch (error) { message.textContent = (error as Error).message; }
+  });
+}
+
+async function readCaptureDate(file: File): Promise<string | null> {
+  try {
+    const exif = await parseExif(file, ["DateTimeOriginal", "CreateDate"]);
+    const value = exif?.DateTimeOriginal ?? exif?.CreateDate;
+    if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString();
+    if (typeof value === "string") {
+      const date = new Date(value);
+      if (!Number.isNaN(date.getTime())) return date.toISOString();
+    }
+  } catch { /* Some images do not contain readable EXIF data. */ }
+  return null;
+}
+
+async function convertToWebp(file: File): Promise<File> {
+  let source: ImageBitmap | HTMLImageElement;
+  let objectUrl: string | null = null;
+  try {
+    source = await createImageBitmap(file, { imageOrientation: "from-image" });
+  } catch {
+    objectUrl = URL.createObjectURL(file);
+    source = new Image();
+    source.decoding = "async";
+    source.src = objectUrl;
+    try {
+      await source.decode();
+    } catch {
+      URL.revokeObjectURL(objectUrl);
+      throw new Error(`${file.name} could not be read by this browser`);
+    }
+  }
+  const maxDimension = 3200;
+  const sourceWidth = source instanceof ImageBitmap ? source.width : source.naturalWidth;
+  const sourceHeight = source instanceof ImageBitmap ? source.height : source.naturalHeight;
+  const scale = Math.min(1, maxDimension / Math.max(sourceWidth, sourceHeight));
+  const width = Math.max(1, Math.round(sourceWidth * scale));
+  const height = Math.max(1, Math.round(sourceHeight * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d", { alpha: true });
+  if (!context) throw new Error("Image conversion is unavailable");
+  context.clearRect(0, 0, width, height);
+  context.drawImage(source, 0, 0, width, height);
+  if (source instanceof ImageBitmap) source.close();
+  if (objectUrl) URL.revokeObjectURL(objectUrl);
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", .90));
+  if (!blob || blob.type !== "image/webp") throw new Error("This browser could not convert the photo to WebP");
+  const baseName = file.name.replace(/\.[^.]+$/, "") || "photo";
+  return new File([blob], `${baseName}.webp`, { type: "image/webp", lastModified: file.lastModified });
+}
+
+function adminPhotoRow(photo: Photo): string {
+  return `<article class="admin-photo" data-photo-id="${photo.id}">
+    <img src="${photo.url}" alt="" /><div class="admin-photo-fields">
+      <span class="filename">${escapeHtml(photo.originalName ?? "photo")}</span>
+      <label>day <input class="day-input" type="number" min="0" max="10000" value="${photo.beardDay}" /></label>
+      <label>taken <input class="taken-input" type="datetime-local" value="${toLocalInput(photo.takenAt)}" /></label>
+      <div><button class="save-photo">save</button><button class="delete-photo">delete</button><span class="row-message"></span></div>
+    </div>
+  </article>`;
+}
+
+async function initAdmin(): Promise<void> {
+  const status = await api<{ authenticated: boolean }>("/api/admin/status");
+  if (!status.authenticated) { renderAdminLogin(); return; }
+  const data = await api<GalleryData>("/api/admin/photos");
+  app.innerHTML = `<main class="admin-shell">
+    <header class="admin-header"><a class="wordmark" href="/">beard.</a><div><a href="/">gallery</a><button id="logout">log out</button></div></header>
+    <section class="upload-card"><form id="upload-form">
+      <label>beard day <input name="beardDay" type="number" min="0" max="10000" required /></label>
+      <label class="file-label">photos <input name="photos" type="file" accept="image/*" multiple required /></label>
+      <button type="submit">upload</button><p class="form-message" id="upload-message"></p>
+    </form></section>
+    <section class="admin-list" id="admin-list">${data.photos.length ? data.photos.map(adminPhotoRow).join("") : `<p class="admin-empty">no photos yet.</p>`}</section>
+  </main>`;
+
+  document.querySelector("#logout")?.addEventListener("click", async () => { await api("/api/admin/logout", { method: "POST" }); renderAdminLogin(); });
+  document.querySelector<HTMLFormElement>("#upload-form")!.addEventListener("submit", handleUpload);
+  bindAdminRows();
+}
+
+async function handleUpload(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  const form = event.currentTarget as HTMLFormElement;
+  const button = form.querySelector<HTMLButtonElement>("button[type=submit]")!;
+  const message = document.querySelector<HTMLElement>("#upload-message")!;
+  const data = new FormData(form);
+  const sourceFiles = data.getAll("photos").filter((entry): entry is File => entry instanceof File && entry.size > 0);
+  if (!sourceFiles.length) return;
+  button.disabled = true;
+  message.textContent = "reading photo dates…";
+  const captureDates = await Promise.all(sourceFiles.map(readCaptureDate));
+  message.textContent = "converting to webp…";
+  let convertedFiles: File[];
+  try {
+    convertedFiles = await Promise.all(sourceFiles.map(convertToWebp));
+  } catch (error) {
+    message.textContent = (error as Error).message;
+    button.disabled = false;
+    return;
+  }
+  const uploadData = new FormData();
+  uploadData.set("beardDay", String(data.get("beardDay")));
+  convertedFiles.forEach((file) => uploadData.append("photos", file));
+  const metadata = convertedFiles.map((file, index) => ({
+    name: file.name, lastModified: file.lastModified, takenAt: captureDates[index],
+    originalName: sourceFiles[index].name,
+  }));
+  uploadData.set("metadata", JSON.stringify(metadata));
+  message.textContent = "uploading…";
+  try {
+    await api("/api/admin/photos", { method: "POST", body: uploadData });
+    form.reset();
+    await initAdmin();
+  } catch (error) {
+    message.textContent = (error as Error).message;
+    button.disabled = false;
+  }
+}
+
+function bindAdminRows(): void {
+  document.querySelectorAll<HTMLElement>(".admin-photo").forEach((row) => {
+    row.querySelector(".save-photo")?.addEventListener("click", async () => {
+      const message = row.querySelector<HTMLElement>(".row-message")!;
+      const takenValue = row.querySelector<HTMLInputElement>(".taken-input")!.value;
+      try {
+        await api(`/api/admin/photos/${row.dataset.photoId}`, {
+          method: "PATCH", headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            beardDay: Number(row.querySelector<HTMLInputElement>(".day-input")!.value),
+            takenAt: takenValue ? new Date(takenValue).toISOString() : null,
+          }),
+        });
+        message.textContent = "saved";
+        setTimeout(() => { message.textContent = ""; }, 1600);
+      } catch (error) { message.textContent = (error as Error).message; }
+    });
+    row.querySelector(".delete-photo")?.addEventListener("click", async () => {
+      if (!confirm("Delete this photo?")) return;
+      await api(`/api/admin/photos/${row.dataset.photoId}`, { method: "DELETE" });
+      row.remove();
+    });
+  });
+}
+
+async function boot(): Promise<void> {
+  try {
+    if (location.pathname === "/admin" || location.pathname.startsWith("/admin/")) await initAdmin();
+    else await initGallery();
+  } catch (error) {
+    app.innerHTML = `<p class="fatal-error">${escapeHtml((error as Error).message)}</p>`;
+  }
+}
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeOverlay();
+  else if (event.key === "ArrowLeft" && activePhotoIndex !== null) stepPhoto(-1);
+  else if (event.key === "ArrowRight" && activePhotoIndex !== null) stepPhoto(1);
+});
+void boot();
