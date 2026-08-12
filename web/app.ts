@@ -206,15 +206,17 @@ function setupGalleryMotion(): void {
     dragged = false;
     dragStartX = event.clientX;
     dragStartScroll = track.scrollLeft;
-    surface.classList.add("is-dragging");
-    surface.setPointerCapture(event.pointerId);
   });
   surface.addEventListener("pointermove", (event) => {
     pointerX = event.clientX;
     if (dragging) {
       const distance = event.clientX - dragStartX;
-      if (Math.abs(distance) > 4) dragged = true;
-      track.scrollLeft = dragStartScroll - distance;
+      if (!dragged && Math.abs(distance) > 4) {
+        dragged = true;
+        surface.classList.add("is-dragging");
+        surface.setPointerCapture(event.pointerId);
+      }
+      if (dragged) track.scrollLeft = dragStartScroll - distance;
     }
     scaleCards();
   });
@@ -229,8 +231,8 @@ function setupGalleryMotion(): void {
     }
     if (!surface.matches(":hover")) { active = false; cancelAnimationFrame(frame); }
   };
-  surface.addEventListener("pointerup", finishDrag);
-  surface.addEventListener("pointercancel", finishDrag);
+  window.addEventListener("pointerup", finishDrag);
+  window.addEventListener("pointercancel", finishDrag);
   surface.addEventListener("click", (event) => {
     if (!suppressClick) return;
     event.preventDefault();
